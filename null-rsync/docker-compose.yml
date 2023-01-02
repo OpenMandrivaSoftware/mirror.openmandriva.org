@@ -1,0 +1,9 @@
+version: '2.1'
+
+services:
+
+  cron:
+    build: 'cron'
+    restart: unless-stopped
+    volumes:
+      - /home/mirror/repo/openmandriva/:/srv/repo/

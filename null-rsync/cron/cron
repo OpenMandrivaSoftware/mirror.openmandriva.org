@@ -1,0 +1,1 @@
+*/2 * * * * /usr/bin/python2 /null-rsync.py abf.openmandriva.org::openmandriva-full/ /srv/repo/
