@@ -1,0 +1,53 @@
+version: '2.1'
+
+services:
+  redis:
+    image: 'redis:alpine'
+    restart: always
+    sysctls:
+      - net.core.somaxconn=65535
+    volumes:
+      - ./db/:/data/
+    networks:
+      - default
+
+  app:
+    build: 'app'
+    restart: always
+    depends_on:
+      - redis
+      - geoipupdate
+    ports:
+      - 8080:8080
+    expose:
+      - 8080
+    environment:
+      - VIRTUAL_HOST=mirror.openmandriva.org
+      - VIRTUAL_NETWORK=nginx-proxy
+      - VIRTUAL_PORT=8080
+      - LETSENCRYPT_HOST=mirror.openmandriva.org
+      - LETSENCRYPT_EMAIL=siteadmin@openmandriva.org
+    volumes:
+      - /home/mirror/repo/openmandriva/:/srv/repo/
+      - ./mirrorbits.conf:/etc/mirrorbits.conf
+      - ./GeoIP:/usr/share/GeoIP
+    networks:
+      - default
+      - web
+
+  geoipupdate:
+    image: maxmindinc/geoipupdate
+    restart: unless-stopped
+    environment:
+      - GEOIPUPDATE_ACCOUNT_ID=459014
+      - GEOIPUPDATE_LICENSE_KEY=UV0HKxXs3SRVP7f2
+      - 'GEOIPUPDATE_EDITION_IDS=GeoLite2-ASN GeoLite2-City GeoLite2-Country'
+      - GEOIPUPDATE_FREQUENCY=1
+    volumes:
+      - ./GeoIP:/usr/share/GeoIP
+    networks:
+      - default
+
+networks:
+  web:
+    external: true
