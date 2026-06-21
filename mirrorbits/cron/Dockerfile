@@ -1,21 +1,16 @@
-FROM frolvlad/alpine-python2
-
-#============
-# Following command for ifever upstream is missing
-#FROM alpine:3.15
+FROM alpine:3.15
 # Downgraded to Alpine 3.15 as newer versions of Alpine don't have python2 anymore
 
 
 # This hack is widely applied to avoid python printing issues in docker containers.
 # See: https://github.com/Docker-Hub-frolvlad/docker-alpine-python3/pull/13
-#ENV PYTHONUNBUFFERED=1
+ENV PYTHONUNBUFFERED=1
 
-#RUN apk add --no-cache python2 && \
-#    python -m ensurepip && \
-#    rm -r /usr/lib/python*/ensurepip && \
-#    pip install --upgrade pip setuptools && \
-#    rm -r /root/.cache
-#============
+RUN apk add --no-cache python2 && \
+    python -m ensurepip && \
+    rm -r /usr/lib/python*/ensurepip && \
+    pip install --upgrade pip setuptools && \
+    rm -r /root/.cache
 
 RUN apk --update --no-cache add \
     rsync

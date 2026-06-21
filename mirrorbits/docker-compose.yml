@@ -1,24 +1,22 @@
-version: '2.1'
-
 services:
   redis:
     image: 'redis:alpine'
     restart: unless-stopped
+    container_name: redis
     sysctls:
       - net.core.somaxconn=65535
     volumes:
       - ./db/:/data/
-    networks:
-      - default
+      - ./redis.conf:/usr/local/etc/redis/redis.conf:ro
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
 
   app:
     build: 'app'
     restart: unless-stopped
+    container_name: mirrorbits
     depends_on:
       - redis
       - geoipupdate
-    ports:
-      - 8080:8080
     expose:
       - 8080
     environment:
@@ -28,19 +26,19 @@ services:
       - LETSENCRYPT_HOST=mirror.openmandriva.org
       - LETSENCRYPT_EMAIL=siteadmin@openmandriva.org
     volumes:
-      - /home/mirror/repo/openmandriva/:/srv/repo/
+      - /opt/mirror/repo/openmandriva/:/srv/repo/
       - ./mirrorbits.conf:/etc/mirrorbits.conf
       - ./GeoIP:/usr/share/GeoIP
     networks:
       - default
-      - web
 
   geoipupdate:
     image: maxmindinc/geoipupdate
     restart: unless-stopped
+    container_name: geoipupdate
     environment:
-      - GEOIPUPDATE_ACCOUNT_ID=459014
-      - GEOIPUPDATE_LICENSE_KEY=UV0HKxXs3SRVP7f2
+      - GEOIPUPDATE_ACCOUNT_ID=${GEOIPUPDATE_ACCOUNT_ID}
+      - GEOIPUPDATE_LICENSE_KEY=${GEOIPUPDATE_LICENSE_KEY}
       - 'GEOIPUPDATE_EDITION_IDS=GeoLite2-ASN GeoLite2-City GeoLite2-Country'
       - GEOIPUPDATE_FREQUENCY=1
     volumes:
@@ -48,6 +46,26 @@ services:
     networks:
       - default
 
-networks:
-  web:
-    external: true
+  caddy:
+    image: 'caddy:alpine'
+    container_name: caddy
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data:/data
+      - ./config:/config
+    environment:
+      - CADDY_EMAIL=siteadmin@openmandriva.org
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+
+  cron:
+    build: 'cron'
+    container_name: nullrsync
+    restart: unless-stopped
+    volumes:
+      - /opt/mirror/repo/openmandriva/:/srv/repo/

@@ -1,0 +1,9 @@
+# Donnees runtime / artefacts (non versionnes)
+repo/
+mirrorbits/app/
+mirrorbits/db/
+mirrorbits/GeoIP/
+mirrorbits/data/
+mirrorbits/config/
+mirrorbits/liste
+mirrorbits/.env

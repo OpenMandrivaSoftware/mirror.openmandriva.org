@@ -1,0 +1,31 @@
+{
+    auto_https disable_redirects
+    admin off
+}
+mirror.openmandriva.org:80 {
+    encode zstd gzip
+    reverse_proxy http://app:8080 {
+        header_up X-Forwarded-Proto {scheme}
+        transport http {
+            versions h1
+            keepalive 32s
+        }
+    }
+    log {
+        output discard
+    }
+}
+mirror.openmandriva.org:443 {
+    encode zstd gzip
+    reverse_proxy http://app:8080 {
+        header_up X-Forwarded-Proto {scheme}
+        transport http {
+            versions h1
+            keepalive 32s
+        }
+    }
+    log {
+        output discard
+    }
+}
+
