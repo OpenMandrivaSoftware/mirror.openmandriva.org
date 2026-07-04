@@ -1,6 +1,6 @@
 services:
   redis:
-    image: 'redis:alpine'
+    image: 'redis@sha256:9d317178eceac8454a2284a9e6df2466b93c745529947f0cd42a0fa9609d7005'
     restart: unless-stopped
     container_name: redis
     sysctls:
@@ -19,12 +19,6 @@ services:
       - geoipupdate
     expose:
       - 8080
-    environment:
-      - VIRTUAL_HOST=mirror.openmandriva.org
-      - VIRTUAL_NETWORK=nginx-proxy
-      - VIRTUAL_PORT=8080
-      - LETSENCRYPT_HOST=mirror.openmandriva.org
-      - LETSENCRYPT_EMAIL=siteadmin@openmandriva.org
     volumes:
       - /opt/mirror/repo/openmandriva/:/srv/repo/
       - ./mirrorbits.conf:/etc/mirrorbits.conf
@@ -33,21 +27,21 @@ services:
       - default
 
   geoipupdate:
-    image: maxmindinc/geoipupdate
+    image: maxmindinc/geoipupdate@sha256:faecdca22579730ab0b7dea5aa9af350bb3c93cb9d39845c173639ead30346d2
     restart: unless-stopped
     container_name: geoipupdate
     environment:
       - GEOIPUPDATE_ACCOUNT_ID=${GEOIPUPDATE_ACCOUNT_ID}
       - GEOIPUPDATE_LICENSE_KEY=${GEOIPUPDATE_LICENSE_KEY}
       - 'GEOIPUPDATE_EDITION_IDS=GeoLite2-ASN GeoLite2-City GeoLite2-Country'
-      - GEOIPUPDATE_FREQUENCY=1
+      - GEOIPUPDATE_FREQUENCY=24
     volumes:
       - ./GeoIP:/usr/share/GeoIP
     networks:
       - default
 
   caddy:
-    image: 'caddy:alpine'
+    image: 'caddy@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648'
     container_name: caddy
     restart: unless-stopped
     depends_on:

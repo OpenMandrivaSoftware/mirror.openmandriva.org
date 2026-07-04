@@ -1,6 +1,7 @@
 # Donnees runtime / artefacts (non versionnes)
 repo/
-mirrorbits/app/
+mirrorbits/app/*
+!mirrorbits/app/Dockerfile
 mirrorbits/db/
 mirrorbits/GeoIP/
 mirrorbits/data/
