@@ -4,11 +4,17 @@
 }
 mirror.openmandriva.org:80 {
     encode zstd gzip
-    reverse_proxy http://app:8080 {
-        header_up X-Forwarded-Proto {scheme}
-        transport http {
-            versions 1.1
-            keepalive 32s
+    handle_path /localjs/* {
+        root * /srv/localjs
+        file_server
+    }
+    handle {
+        reverse_proxy http://app:8080 {
+            header_up X-Forwarded-Proto {scheme}
+            transport http {
+                versions 1.1
+                keepalive 32s
+            }
         }
     }
     log {
@@ -17,15 +23,20 @@ mirror.openmandriva.org:80 {
 }
 mirror.openmandriva.org:443 {
     encode zstd gzip
-    reverse_proxy http://app:8080 {
-        header_up X-Forwarded-Proto {scheme}
-        transport http {
-            versions 1.1
-            keepalive 32s
+    handle_path /localjs/* {
+        root * /srv/localjs
+        file_server
+    }
+    handle {
+        reverse_proxy http://app:8080 {
+            header_up X-Forwarded-Proto {scheme}
+            transport http {
+                versions 1.1
+                keepalive 32s
+            }
         }
     }
     log {
         output discard
     }
 }
-

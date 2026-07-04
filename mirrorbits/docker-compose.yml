@@ -23,6 +23,7 @@ services:
       - /opt/mirror/repo/openmandriva/:/srv/repo/
       - ./mirrorbits.conf:/etc/mirrorbits.conf
       - ./GeoIP:/usr/share/GeoIP
+      - ./templates/base.html:/usr/share/mirrorbits/base.html:ro
     networks:
       - default
 
@@ -53,6 +54,7 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./data:/data
       - ./config:/config
+      - ./assets:/srv/localjs:ro
     environment:
       - CADDY_EMAIL=siteadmin@openmandriva.org
     command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
