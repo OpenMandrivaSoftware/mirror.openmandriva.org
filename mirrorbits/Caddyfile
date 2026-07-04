@@ -7,7 +7,7 @@ mirror.openmandriva.org:80 {
     reverse_proxy http://app:8080 {
         header_up X-Forwarded-Proto {scheme}
         transport http {
-            versions h1
+            versions 1.1
             keepalive 32s
         }
     }
@@ -20,7 +20,7 @@ mirror.openmandriva.org:443 {
     reverse_proxy http://app:8080 {
         header_up X-Forwarded-Proto {scheme}
         transport http {
-            versions h1
+            versions 1.1
             keepalive 32s
         }
     }
