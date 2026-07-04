@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenMandriva mirrors</title>
+<style>
+  :root { --om-blue:#2080BB; --om-deep:#005C9D; --om-sky:#40A5DA; --om-dark:#21242B; --om-grey:#AFB3BD; --om-cerise:#E2266E; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:'Lato','Segoe UI',Arial,sans-serif; color:var(--om-dark); background:#f6f8fa; }
+  header { background:var(--om-blue); border-bottom:3px solid var(--om-deep); padding:14px 20px; display:flex; align-items:center; gap:14px; }
+  header img { height:34px; }
+  header .t { color:#fff; font-size:20px; font-weight:900; letter-spacing:.5px; }
+  main { max-width:960px; margin:0 auto; padding:28px 20px 48px; }
+  .lead { color:#3b4048; font-size:16px; margin:8px 0 26px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:16px; }
+  a.card { display:block; text-decoration:none; background:#fff; border:1px solid #e2e6ea; border-left:4px solid var(--om-blue);
+           border-radius:8px; padding:16px 18px; transition:border-color .15s, box-shadow .15s, transform .05s; }
+  a.card:hover { border-left-color:var(--om-cerise); box-shadow:0 4px 14px rgba(0,0,0,.08); transform:translateY(-1px); }
+  a.card .h { color:var(--om-deep); font-size:17px; font-weight:900; margin:0 0 4px; }
+  a.card:hover .h { color:var(--om-cerise); }
+  a.card .d { color:#586069; font-size:13.5px; line-height:1.45; }
+  footer { text-align:center; color:#8a9099; font-size:12.5px; padding:20px; }
+  footer a { color:var(--om-blue); text-decoration:none; }
+  @media (prefers-color-scheme: dark) {
+    body { background:#16181d; color:#e6e8ea; }
+    a.card { background:#1e2127; border-color:#2b2f36; }
+    a.card .d { color:#a9b0b8; }
+    .lead { color:#b9c0c8; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <img src="/localjs/openmandriva-wh.svg" alt="OpenMandriva">
+  <span class="t">Mirrors</span>
+</header>
+<main>
+  <p class="lead">Distribution mirror network for OpenMandriva. Downloads are redirected automatically to the nearest healthy mirror, with ABF as fallback. Below are the tools to inspect the network.</p>
+  <div class="grid">
+    <a class="card" href="/?mirrorstats">
+      <div class="h">Mirror statistics</div>
+      <div class="d">Live Mirrorbits view: world map, per-mirror download volume and sync offset.</div>
+    </a>
+    <a class="card" href="/release_current/README.txt?mirrorlist">
+      <div class="h">Mirror list (example)</div>
+      <div class="d">Which mirrors serve a given file, with your detected location, distances and weights.</div>
+    </a>
+    <a class="card" href="https://wiki.openmandriva.org/en/team/infra/mirror-status">
+      <div class="h">Reliability ranking</div>
+      <div class="d">Auto-generated table scoring mirrors on availability and content freshness.</div>
+    </a>
+    <a class="card" href="https://mirmon.openmandriva.org/">
+      <div class="h">Freshness monitor (mirmon)</div>
+      <div class="d">Per-mirror age of the last successful sync, probed over HTTP.</div>
+    </a>
+    <a class="card" href="https://wiki.openmandriva.org/en/team/infra/mirroring">
+      <div class="h">Set up a mirror</div>
+      <div class="d">How to become an OpenMandriva mirror: origins, rsync, disk requirements.</div>
+    </a>
+    <a class="card" href="https://wiki.openmandriva.org/">
+      <div class="h">OpenMandriva wiki</div>
+      <div class="d">Project documentation, teams and infrastructure.</div>
+    </a>
+  </div>
+</main>
+<footer>
+  OpenMandriva mirrors · powered by <a href="https://github.com/etix/mirrorbits">Mirrorbits</a>
+</footer>
+</body>
+</html>

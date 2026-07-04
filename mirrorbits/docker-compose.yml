@@ -55,6 +55,7 @@ services:
       - ./data:/data
       - ./config:/config
       - ./assets:/srv/localjs:ro
+      - ./www:/srv/www:ro
     environment:
       - CADDY_EMAIL=siteadmin@openmandriva.org
     command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]

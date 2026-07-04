@@ -8,6 +8,15 @@ mirror.openmandriva.org:80 {
         root * /srv/localjs
         file_server
     }
+    @landing {
+        path /
+        expression {query} == ""
+    }
+    handle @landing {
+        root * /srv/www
+        rewrite * /index.html
+        file_server
+    }
     handle {
         reverse_proxy http://app:8080 {
             header_up X-Forwarded-Proto {scheme}
@@ -25,6 +34,15 @@ mirror.openmandriva.org:443 {
     encode zstd gzip
     handle_path /localjs/* {
         root * /srv/localjs
+        file_server
+    }
+    @landing {
+        path /
+        expression {query} == ""
+    }
+    handle @landing {
+        root * /srv/www
+        rewrite * /index.html
         file_server
     }
     handle {
