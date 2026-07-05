@@ -110,16 +110,21 @@
                 text-decoration: underline;
             }
         </style>
+        <link rel="stylesheet" href="{{.LocalJSPath}}/om-portal.css">
 {{template "head" .}}
     </head>
     <body>
         <div id="wrapper">
-            <div id="header">
-                <div class="title">
-                    <a href="https://wiki.openmandriva.org/en/team/infra/mirror-status" style="text-decoration: none; color: inherit;"><img src="{{.LocalJSPath}}/openmandriva-wh.svg" alt="OpenMandriva mirrors" style="height: 32px; vertical-align: middle;"></a>
-                </div>
-                <div class="headline">{{template "headline" .}}</div>
-            </div>
+            <nav class="om-nav">
+                <a class="om-brand" href="https://mirror.openmandriva.org/"><img src="{{.LocalJSPath}}/openmandriva-wh.svg" alt="OpenMandriva"></a>
+                <a href="https://mirror.openmandriva.org/">Home</a>
+                <a href="https://mirror.openmandriva.org/?mirrorstats">Statistics</a>
+                <a href="https://mirror.openmandriva.org/TIME.txt?mirrorlist">Mirror list</a>
+                <a href="https://mirmon.openmandriva.org/">Freshness</a>
+                <a href="https://mirror.openmandriva.org/status">Reliability</a>
+                <span class="om-spacer"></span>
+                <a class="om-wiki" href="https://wiki.openmandriva.org/">Wiki &#8599;</a>
+            </nav>
             <div id="content">
 {{template "body" .}}
             </div>
@@ -127,6 +132,7 @@
                 OpenMandriva mirrors · powered by Mirrorbits {{version}} on {{hostname}}
             </div>
         </div>
+        <script src="{{.LocalJSPath}}/om-portal.js"></script>
     </body>
 </html>
 {{end}}

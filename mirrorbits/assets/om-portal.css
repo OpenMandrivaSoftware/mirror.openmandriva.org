@@ -1,0 +1,24 @@
+/* OpenMandriva mirror portal — shared top navigation + palette */
+:root{
+  --om-blue:#2080BB; --om-deep:#005C9D; --om-sky:#40A5DA;
+  --om-dark:#21242B; --om-grey:#AFB3BD; --om-cerise:#E2266E;
+}
+.om-nav{
+  position:fixed; top:0; left:0; right:0; height:48px;
+  background:var(--om-blue); border-bottom:3px solid var(--om-deep);
+  display:flex; align-items:center; gap:2px; padding:0 12px; z-index:100000;
+  font-family:'Lato','Segoe UI',Arial,sans-serif;
+  box-shadow:0 1px 4px rgba(0,0,0,.18); overflow-x:auto;
+}
+.om-nav .om-brand{ display:flex; align-items:center; margin-right:8px; flex:0 0 auto; }
+.om-nav .om-brand img{ height:26px; display:block; }
+.om-nav a{
+  color:rgba(255,255,255,.92); text-decoration:none; white-space:nowrap;
+  font-size:14px; font-weight:700; padding:6px 12px; border-radius:6px; line-height:1;
+}
+.om-nav a:hover{ background:rgba(255,255,255,.16); color:#fff; }
+.om-nav a.active{ background:#fff; color:var(--om-deep); }
+.om-nav .om-spacer{ flex:1 1 auto; }
+.om-nav a.om-wiki{ color:#fff; border:1px solid rgba(255,255,255,.55); }
+.om-nav a.om-wiki:hover{ background:var(--om-cerise); border-color:var(--om-cerise); }
+body.om-has-nav{ padding-top:48px !important; }

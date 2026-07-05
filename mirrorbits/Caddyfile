@@ -17,6 +17,11 @@ mirror.openmandriva.org:80 {
         rewrite * /index.html
         file_server
     }
+    handle /status {
+        root * /srv/www
+        rewrite * /status.html
+        file_server
+    }
     handle {
         reverse_proxy http://app:8080 {
             header_up X-Forwarded-Proto {scheme}
@@ -43,6 +48,11 @@ mirror.openmandriva.org:443 {
     handle @landing {
         root * /srv/www
         rewrite * /index.html
+        file_server
+    }
+    handle /status {
+        root * /srv/www
+        rewrite * /status.html
         file_server
     }
     handle {
