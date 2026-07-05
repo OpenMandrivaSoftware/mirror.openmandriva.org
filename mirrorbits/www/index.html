@@ -22,6 +22,12 @@
   a.card .h { color:var(--om-deep); font-size:16px; font-weight:900; margin:0 0 3px; }
   a.card:hover .h { color:var(--om-cerise); }
   a.card .d { color:#586069; font-size:13px; line-height:1.45; }
+  a.cta { display:flex; flex-direction:column; gap:2px; text-decoration:none; margin:0 0 8px;
+          background:var(--om-blue); color:#fff; border-radius:10px; padding:16px 20px;
+          box-shadow:0 3px 12px rgba(32,128,187,.28); transition:background .15s, transform .05s; }
+  a.cta:hover { background:var(--om-deep); transform:translateY(-1px); }
+  a.cta .k { font-size:19px; font-weight:900; }
+  a.cta .s { font-size:13px; opacity:.92; }
   footer { text-align:center; color:#8a9099; font-size:12.5px; padding:20px; }
   footer a { color:var(--om-blue); text-decoration:none; }
   @media (prefers-color-scheme: dark) {
@@ -35,6 +41,7 @@
 <nav class="om-nav">
   <a class="om-brand" href="https://mirror.openmandriva.org/"><img src="/localjs/openmandriva-wh.svg?v=3" alt="OpenMandriva"></a>
   <a href="https://mirror.openmandriva.org/">Home</a>
+  <a href="https://mirror.openmandriva.org/downloads">Downloads</a>
   <a href="https://mirror.openmandriva.org/?mirrorstats">Statistics</a>
   <a href="https://mirror.openmandriva.org/TIME.txt?mirrorlist">Mirror list</a>
   <a href="https://mirmon.openmandriva.org/">Freshness</a>
@@ -45,6 +52,8 @@
 <main>
   <h1>OpenMandriva mirrors</h1>
   <p class="lead">Distribution mirror network for OpenMandriva. Downloads are redirected automatically to the nearest healthy mirror, with ABF as fallback. The tools below let you inspect the network.</p>
+
+  <a class="cta" href="/downloads"><span class="k">Download OpenMandriva &#8594;</span><span class="s">Current ISO images, served by the mirror network, with checksums.</span></a>
 
   <section>
     <h2>Mirror tools</h2>
