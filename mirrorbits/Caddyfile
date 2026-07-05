@@ -27,6 +27,10 @@ mirror.openmandriva.org:80 {
         rewrite * /downloads.html
         file_server
     }
+    handle /favicon.ico {
+        root * /srv/localjs
+        file_server
+    }
     handle {
         reverse_proxy http://app:8080 {
             header_up X-Forwarded-Proto {scheme}
@@ -63,6 +67,10 @@ mirror.openmandriva.org:443 {
     handle /downloads {
         root * /srv/www
         rewrite * /downloads.html
+        file_server
+    }
+    handle /favicon.ico {
+        root * /srv/localjs
         file_server
     }
     handle {
