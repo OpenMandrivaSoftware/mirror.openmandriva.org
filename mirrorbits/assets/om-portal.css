@@ -17,7 +17,8 @@
   font-size:14px; font-weight:700; padding:6px 12px; border-radius:6px; line-height:1;
 }
 .om-nav a:hover{ background:rgba(255,255,255,.16); color:#fff; }
-.om-nav a.active{ background:#fff; color:var(--om-deep); }
+.om-nav a.active:not(.om-brand){ background:#fff; color:var(--om-deep); }
+.om-nav a.om-brand, .om-nav a.om-brand.active{ background:transparent; }
 .om-nav .om-spacer{ flex:1 1 auto; }
 .om-nav a.om-wiki{ color:#fff; border:1px solid rgba(255,255,255,.55); }
 .om-nav a.om-wiki:hover{ background:var(--om-cerise); border-color:var(--om-cerise); }

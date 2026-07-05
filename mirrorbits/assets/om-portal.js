@@ -2,7 +2,7 @@
 (function(){
   function norm(u){ try{ return (u||"").replace(/\/+$/,""); }catch(e){ return u; } }
   var here = norm(location.origin + location.pathname + location.search);
-  var links = document.querySelectorAll(".om-nav a[href]");
+  var links = document.querySelectorAll(".om-nav a[href]:not(.om-brand)");
   for (var i=0;i<links.length;i++){
     if (norm(links[i].href) === here){ links[i].classList.add("active"); }
   }
