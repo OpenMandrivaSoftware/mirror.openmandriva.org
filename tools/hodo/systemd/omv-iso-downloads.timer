@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily refresh of the OpenMandriva ISO downloads page
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=20m
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,448 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+omv-mirror-status : genere un tableau de fiabilite des miroirs OpenMandriva et le
+publie comme page wiki team/infra/mirror-status.md (repo GitHub OpenMandrivaSoftware/wiki,
+branche master ; Wiki.js la tire en <=5 min).
+
+Sources :
+- Mirrorbits (Redis sur mirror.openmandriva.org via ssh) : disponibilite (up/down),
+  sante de scan (indexation), popularite (downloads).
+- TIME.txt HTTP de chaque miroir : VRAIE fraicheur du contenu (comme mirmon), independante
+  de la capacite de Mirrorbits a scanner le miroir.
+
+Usage:
+  omv-mirror-status --dry-run   # imprime le markdown, ne publie pas
+  omv-mirror-status             # publie via gh api
+
+Notes:
+- "Content age" = temps depuis le dernier TIME.txt publie par le miroir (fraicheur reelle).
+- "Scan" = sante d'indexation Mirrorbits (rsync/ftp). Un scan casse n'implique PAS un contenu
+  perime (ex. un miroir qui a change d'URL rsync reste frais en HTTP) -> hors du score, en info.
+- "Reactivity" = PROXY (duree mediane des scans reussis), pas une vraie vitesse de telechargement.
+- L'horloge de reference (now) est derivee des donnees, insensible au decalage d'horloge local.
+"""
+import json, subprocess, sys, base64, statistics, urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+
+MIRROR_HOST = "ashledombos@mirror.openmandriva.org"
+REDIS_CTR   = "redis"
+MB_CTR      = "mirrorbits"
+WIKI_REPO   = "OpenMandrivaSoftware/wiki"
+WIKI_PATH   = "team/infra/mirror-status.md"
+MASTER_TIME = "http://abf-downloads.openmandriva.org/TIME.txt"
+WINDOW_DAYS = 30
+LOG_TAIL    = 6000
+HTTP_TIMEOUT = 8
+WINDOW      = WINDOW_DAYS * 86400
+
+REMOTE = r'''
+set -u
+R="''' + REDIS_CTR + r'''"; MB="''' + MB_CTR + r'''"
+SD=$(date -u -d '@'"$(( $(date -u +%s) - ''' + str(WINDOW) + r''' ))" +%F 2>/dev/null || date -u +%F)
+ED=$(date -u +%F)
+mapfile -t P < <(docker exec "$R" redis-cli HGETALL MIRRORS)
+n=${#P[@]}; i=0
+while [ "$i" -lt "$n" ]; do
+  id="${P[$i]}"; name="${P[$((i+1))]}"
+  echo "@@MIRROR $id $name"
+  docker exec "$R" redis-cli HGETALL "MIRROR_$id"
+  echo "@@STATS $id"
+  docker exec "$MB" mirrorbits stats -start-date "$SD" -end-date "$ED" -h=false mirror "$name" 2>/dev/null | grep -iE "Download requests|Bytes transferred" || true
+  echo "@@LOGS $id"
+  docker exec "$R" redis-cli LRANGE "MIRRORLOGS_$id" -''' + str(LOG_TAIL) + r''' -1
+  i=$((i+2))
+done
+echo "@@END"
+'''
+
+
+def fetch():
+    r = subprocess.run(
+        ["ssh", "-o", "ConnectTimeout=20", "-o", "BatchMode=yes", MIRROR_HOST, "bash", "-s"],
+        input=REMOTE, capture_output=True, text=True, timeout=300)
+    if r.returncode != 0:
+        sys.exit("Erreur extraction ssh: " + r.stderr.strip())
+    return r.stdout
+
+
+def http_time(url):
+    """Recupere le TIME.txt (epoch) a la racine http d'un miroir. None si echec."""
+    if not url:
+        return None
+    u = url if url.endswith("/") else url + "/"
+    u += "TIME.txt"
+    try:
+        with urllib.request.urlopen(u, timeout=HTTP_TIMEOUT) as resp:
+            return int(resp.read(64).split()[0])
+    except Exception:
+        return None
+
+
+def parse_ts(s):
+    s = s.strip().rstrip("Z")
+    if "." in s:
+        head, frac = s.split(".", 1)
+        s = head + "." + frac[:6]
+        fmt = "%Y-%m-%dT%H:%M:%S.%f"
+    else:
+        fmt = "%Y-%m-%dT%H:%M:%S"
+    return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc).timestamp()
+
+
+def parse(raw):
+    mirrors = {}; cur = None; sect = None
+    for line in raw.splitlines():
+        if line.startswith("@@MIRROR "):
+            _, mid, name = line.split(" ", 2)
+            cur = {"id": mid, "name": name, "fields": [], "logs": [], "stats": []}
+            mirrors[mid] = cur; sect = "M"
+        elif line.startswith("@@STATS "):
+            sect = "S"
+        elif line.startswith("@@LOGS "):
+            sect = "L"
+        elif line == "@@END":
+            break
+        elif cur is None:
+            continue
+        elif sect == "M":
+            cur["fields"].append(line)
+        elif sect == "S":
+            cur["stats"].append(line)
+        elif sect == "L":
+            if line.strip():
+                cur["logs"].append(line)
+    for m in mirrors.values():
+        f = m["fields"]; m["h"] = {f[i]: f[i + 1] for i in range(0, len(f) - 1, 2)}
+        evs = []
+        for j in m["logs"]:
+            try: evs.append(json.loads(j))
+            except Exception: pass
+        m["events"] = evs
+    return mirrors
+
+
+def enrich_content_time(mirrors):
+    items = list(mirrors.values())
+    with ThreadPoolExecutor(max_workers=10) as ex:
+        times = list(ex.map(lambda m: http_time(m["h"].get("http", "")), items))
+    for m, t in zip(items, times):
+        m["content_time"] = t
+
+
+def now_ref(mirrors):
+    mx = 0.0
+    for m in mirrors.values():
+        for e in m["events"]:
+            t = e.get("Timestamp")
+            if t:
+                try: mx = max(mx, parse_ts(t))
+                except Exception: pass
+        for k in ("lastSync", "lastSuccessfulSync", "lastModTime"):
+            try: mx = max(mx, float(m["h"].get(k, 0) or 0))
+            except Exception: pass
+        if m.get("content_time"): mx = max(mx, float(m["content_time"]))
+    return mx or datetime.now(timezone.utc).timestamp()
+
+
+def availability(events, start, end, cur_up):
+    trans = sorted(((parse_ts(e["Timestamp"]), bool(e["Up"]))
+                    for e in events if e.get("Type") == 6 and e.get("Timestamp")),
+                   key=lambda x: x[0])
+    if not trans:
+        return 100.0 if cur_up else 0.0
+    state = None
+    for t, up in trans:
+        if t <= start: state = up
+    if state is None: state = trans[0][1]
+    up_time = 0.0; cursor = start
+    for t, up in trans:
+        if t < start: continue
+        if t > end: break
+        if state: up_time += t - cursor
+        cursor = t; state = up
+    if state: up_time += end - cursor
+    return 100.0 * up_time / (end - start)
+
+
+def scan_stats(events, start, end):
+    succ = err = 0; durs = []; pend = {}
+    for e in events:
+        ts = e.get("Timestamp")
+        if not ts: continue
+        try: t = parse_ts(ts)
+        except Exception: continue
+        if t < start or t > end: continue
+        ty = e.get("Type")
+        if ty == 7: pend[e.get("MirrorID")] = t
+        elif ty == 8:
+            succ += 1
+            st = pend.pop(e.get("MirrorID"), None)
+            if st is not None and t >= st: durs.append(t - st)
+        elif ty == 1: err += 1
+    total = succ + err
+    return ((100.0 * succ / total) if total else None,
+            statistics.median(durs) if durs else None, total)
+
+
+def human_age(sec):
+    if sec is None: return "?"
+    sec = int(sec)
+    if sec < 3600: return f"{sec // 60}min"
+    if sec < 86400: return f"{sec // 3600}h"
+    return f"{sec // 86400}j"
+
+
+def human_bytes(n):
+    n = float(n)
+    for u in ("o", "Ko", "Mo", "Go", "To", "Po"):
+        if n < 1024: return f"{n:.0f} {u}" if u == "o" else f"{n:.1f} {u}"
+        n /= 1024
+    return f"{n:.1f} Eo"
+
+
+def flag(cc):
+    cc = (cc or "").split()[0].upper() if cc else ""
+    if len(cc) != 2 or not cc.isalpha(): return ""
+    return "".join(chr(0x1F1E6 + ord(c) - ord("A")) for c in cc)
+
+
+def fresh_score(age):
+    # 100 si < 1 jour, 0 si >= 3 jours (les miroirs doivent se resynchroniser au moins quotidiennement)
+    if age is None: return 0.0
+    d = age / 86400.0
+    if d <= 1: return 100.0
+    if d >= 3: return 0.0
+    return 100.0 * (3 - d) / 2.0
+
+
+def klass(score, content_age):
+    if content_age is None: return "n/a"
+    if score >= 90: return "⭐⭐⭐"
+    if score >= 70: return "⭐⭐"
+    if score >= 40: return "⭐"
+    return ""
+
+
+def compute(mirrors, nref):
+    start = nref - WINDOW
+    rows = []
+    for m in mirrors.values():
+        h = m["h"]
+        name = h.get("name", m["name"])
+        enabled = h.get("enabled") == "1"
+        # v0.6.1 a renommé le champ d'état: httpsUp (repli sur up pour compat)
+        up = (h.get("httpsUp") or h.get("up") or "") == "1"
+        ct = m.get("content_time")
+        content_age = (nref - ct) if ct else None
+        avail = availability(m["events"], start, nref, up)
+        rate, med, nscans = scan_stats(m["events"], start, nref)
+        reqs = byts = None
+        for s in m["stats"]:
+            low = s.lower(); val = s.split(":", 1)[1].strip() if ":" in s else ""
+            if "download requests" in low:
+                try: reqs = int(val.replace(",", "").split()[0])
+                except Exception: pass
+            elif "bytes transferred" in low:
+                try: byts = float(val.replace(",", "").split()[0])
+                except Exception: pass
+        state = "disabled" if not enabled else ("up" if up else "down")
+        origin = ("abf-downloads" in (h.get("http") or "")) or name == "openmandriva.org"
+        # score MULTIPLICATIF : un miroir n'est utile que s'il est A LA FOIS joignable ET a jour.
+        # (le scan Mirrorbits reste informatif, hors score)
+        score = (avail / 100.0) * fresh_score(content_age)
+        rows.append(dict(name=name, cc=h.get("countryCodes", ""), state=state, enabled=enabled,
+                         content_age=content_age, avail=avail, rate=rate, med=med,
+                         reqs=reqs, byts=byts, score=score, origin=origin,
+                         cls=klass(score, content_age)))
+    return rows
+
+
+def render(rows, nref):
+    ref = datetime.fromtimestamp(nref, timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    act = [r for r in rows if r["enabled"]]
+    dis = [r for r in rows if not r["enabled"]]
+    act.sort(key=lambda r: (r["score"], -(r["content_age"] or 9e18)), reverse=True)
+    dis.sort(key=lambda r: r["name"])
+    o = []
+    o += ["---",
+          "title: Mirror reliability status",
+          "description: Auto-generated mirror reliability ranking (do not edit by hand)",
+          "published: true",
+          f"date: {datetime.fromtimestamp(nref, timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')}",
+          "tags: documentation",
+          "editor: markdown",
+          "dateCreated: 2026-07-04T00:00:00.000Z",
+          "---", "",
+          "# Mirror reliability status", ""]
+    o += [f"> Auto-generated, refreshed daily. Do not edit by hand. Data as of **{ref}** "
+          f"({WINDOW_DAYS}-day window). {{.is-info}}", ""]
+    o += ["Automatic ranking, no manual judgement. **Score = availability% × content-freshness%** "
+          "(a mirror ranks well only when it is both reachable and up to date).", "",
+          "Columns: **Content age** (time since the mirror's own `TIME.txt`, over HTTP; the real freshness). "
+          "**Avail.** (Mirrorbits up/down). **Scan** (Mirrorbits indexing health; informational, not scored: "
+          "a failed scan does not imply stale content). **Reactivity** (rough proxy, median scan duration, "
+          "not a real speed). **Downloads** (popularity). **Class**: ⭐⭐⭐ ≥90, ⭐⭐ ≥70, ⭐ ≥40.", ""]
+    o += ["| # | Mirror | Country | State | Class | Content age | Avail. | Scan | Reactivity | Downloads | Score |",
+          "|---|--------|---------|-------|:-----:|------------:|-------:|-----:|-----------:|----------:|------:|"]
+    for i, r in enumerate(act, 1):
+        av = f"{r['avail']:.1f}%"
+        rt = f"{r['rate']:.0f}%" if r["rate"] is not None else "n/a"
+        me = f"{r['med']:.0f}s" if r["med"] is not None else "n/a"
+        dl = (f"{r['reqs']:,}".replace(",", " ") if r["reqs"] is not None else "n/a")
+        if r["byts"]: dl += f" / {human_bytes(r['byts'])}"
+        st = {"up": "🟢 up", "down": "🔴 down", "disabled": "⚪ disabled"}[r["state"]]
+        ca = human_age(r["content_age"])
+        o.append(f"| {i} | {r['name']} | {flag(r['cc'])} {r['cc']} | {st} | {r['cls']} | {ca} | "
+                 f"{av} | {rt} | {me} | {dl} | **{r['score']:.0f}** |")
+    if dis:
+        o += ["", "## Disabled mirrors", "",
+              "| Mirror | Country | Content age |", "|--------|---------|------------:|"]
+        for r in dis:
+            o.append(f"| {r['name']} | {flag(r['cc'])} {r['cc']} | {human_age(r['content_age'])} |")
+    o += [""]
+    return "\n".join(o) + "\n"
+
+
+NAV_HTML = (
+  '<nav class="om-nav">'
+  '<a class="om-brand" href="https://mirror.openmandriva.org/"><img src="/localjs/openmandriva-wh.svg" alt="OpenMandriva"></a>'
+  '<a href="https://mirror.openmandriva.org/">Home</a>'
+  '<a href="https://mirror.openmandriva.org/downloads">Downloads</a>'
+  '<a href="https://mirror.openmandriva.org/?mirrorstats">Statistics</a>'
+  '<a href="https://mirror.openmandriva.org/TIME.txt?mirrorlist">Mirror list</a>'
+  '<a href="https://mirmon.openmandriva.org/">Freshness</a>'
+  '<a href="https://mirror.openmandriva.org/status">Reliability</a>'
+  '<span class="om-spacer"></span>'
+  '<a class="om-wiki" href="https://wiki.openmandriva.org/">Wiki &#8599;</a>'
+  '</nav>'
+)
+
+HTML_STYLE = """<style>
+ *{box-sizing:border-box}
+ body{margin:0;font-family:'Lato','Segoe UI',Arial,sans-serif;color:#21242B;background:#f6f8fa}
+ main{max-width:1080px;margin:0 auto;padding:22px 16px 48px}
+ h1{font-size:23px;color:var(--om-deep);margin:4px 0 2px;font-weight:900}
+ .note{color:#4b5158;font-size:13.5px;max-width:82ch;line-height:1.5;margin:0 0 6px}
+ .meta{color:#6a7178;font-size:12.5px;margin:0 0 16px}
+ .tw{overflow-x:auto}
+ table{border-collapse:collapse;width:100%;background:#fff;font-size:13.5px;box-shadow:0 1px 3px rgba(0,0,0,.06);border-radius:8px;overflow:hidden}
+ thead th{background:var(--om-blue);color:#fff;font-weight:700;padding:9px 10px;text-align:left;white-space:nowrap}
+ tbody td{padding:8px 10px;border-top:1px solid #eef1f4;white-space:nowrap}
+ tbody tr:nth-child(even){background:#fafbfc}
+ td.num,th.num{text-align:right}
+ td.rank{color:#8a9099;text-align:right}
+ .score{font-weight:900;color:var(--om-deep)}
+ h2{font-size:15px;color:var(--om-blue);margin:26px 0 8px;text-transform:uppercase;letter-spacing:.5px}
+ footer{text-align:center;color:#8a9099;font-size:12.5px;padding:20px}
+ footer a{color:var(--om-blue);text-decoration:none}
+ .origin{background:#eaf3fb;border:1px solid #cfe3f4;border-left:4px solid var(--om-deep);border-radius:8px;padding:12px 14px;margin:0 0 18px;font-size:13.5px;color:#2b3138}
+ .origin b{color:var(--om-deep)}
+ .origin .st{white-space:nowrap;color:#586069}
+ @media (prefers-color-scheme:dark){body{background:#16181d;color:#e6e8ea}table{background:#1e2127}tbody td{border-top-color:#2b2f36}tbody tr:nth-child(even){background:#23262d}.note{color:#b9c0c8}.meta{color:#9aa0a8}.origin{background:#182430;border-color:#264055;color:#c9d3dc}}
+</style>"""
+
+
+def render_html(rows, nref):
+    ref = datetime.fromtimestamp(nref, timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    act = [r for r in rows if r["enabled"]]
+    dis = [r for r in rows if not r["enabled"]]
+    act.sort(key=lambda r: (r["score"], -(r["content_age"] or 9e18)), reverse=True)
+    dis.sort(key=lambda r: r["name"])
+    origin = next((r for r in act if r.get("origin")), None)   # ABF: origine, hors classement
+    act = [r for r in act if not r.get("origin")]
+    dot = {"up": "\U0001F7E2", "down": "\U0001F534", "disabled": "⚪"}
+
+    def trow(i, r):
+        av = "%.1f%%" % r["avail"]
+        rt = ("%.0f%%" % r["rate"]) if r["rate"] is not None else "n/a"
+        me = ("%.0fs" % r["med"]) if r["med"] is not None else "n/a"
+        dl = "{:,}".format(r["reqs"]).replace(",", " ") if r["reqs"] is not None else "n/a"
+        if r["byts"]:
+            dl += " / " + human_bytes(r["byts"])
+        return ("<tr><td class=rank>%d</td><td>%s</td><td>%s %s</td><td>%s %s</td>"
+                "<td>%s</td><td class=num>%s</td><td class=num>%s</td><td class=num>%s</td>"
+                "<td class=num>%s</td><td class=num>%s</td><td class='num score'>%.0f</td></tr>") % (
+                    i, r["name"], flag(r["cc"]), r["cc"], dot[r["state"]], r["state"], r["cls"],
+                    human_age(r["content_age"]), av, rt, me, dl, r["score"])
+
+    body_rows = "\n".join(trow(i, r) for i, r in enumerate(act, 1))
+    dis_html = ""
+    if dis:
+        drows = "".join("<tr><td>%s</td><td>%s %s</td><td class=num>%s</td></tr>"
+                        % (r["name"], flag(r["cc"]), r["cc"], human_age(r["content_age"])) for r in dis)
+        dis_html = ("<h2>Disabled mirrors</h2><div class=tw><table><thead><tr><th>Mirror</th>"
+                    "<th>Country</th><th class=num>Content age</th></tr></thead><tbody>"
+                    + drows + "</tbody></table></div>")
+    head = ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width, initial-scale=1">'
+            '<title>Mirror reliability status | OpenMandriva</title>'
+            '<link rel="icon" type="image/svg+xml" href="/localjs/favicon.svg">'
+            '<link rel="icon" href="/localjs/favicon.ico" sizes="any">'
+            '<link rel="stylesheet" href="/localjs/om-portal.css">' + HTML_STYLE + '</head>')
+    intro = ('<h1>Mirror reliability status</h1>'
+             '<p class="note">Automatic ranking, no manual judgement. '
+             '<b>Score = availability% &times; content-freshness%</b> (a mirror ranks well only when it is '
+             'both reachable and up to date). Content age is the time since the mirror\'s own TIME.txt (real '
+             'freshness, over HTTP). Scan is Mirrorbits indexing health (informational, not scored). '
+             'Reactivity is a rough proxy (median scan duration), not a real speed. Class: '
+             '⭐⭐⭐ ≥90, ⭐⭐ ≥70, ⭐ ≥40.</p>'
+             '<p class="meta">Auto-generated, refreshed daily. Data as of ' + ref + ' (' + str(WINDOW_DAYS) + '-day window).</p>')
+    origin_html = ""
+    if origin:
+        oa = human_age(origin["content_age"])
+        ost = {"up": "reachable", "down": "unreachable", "disabled": "disabled"}.get(origin["state"], origin["state"])
+        origin_html = ('<div class="origin"><b>Origin &mdash; ABF</b> '
+                       '(<code>abf-downloads.openmandriva.org</code>) is OpenMandriva\'s build-system '
+                       'distribution point and the <b>reference every mirror syncs from</b>. It is not a public '
+                       'mirror and is excluded from the ranking below. '
+                       '<span class="st">Reference freshness: ' + oa + ' &middot; ' + ost + '.</span></div>')
+    table = ('<div class=tw><table><thead><tr><th class=num>#</th><th>Mirror</th><th>Country</th>'
+             '<th>State</th><th>Class</th><th class=num>Content age</th><th class=num>Avail.</th>'
+             '<th class=num>Scan</th><th class=num>Reactivity</th><th class=num>Downloads</th>'
+             '<th class=num>Score</th></tr></thead><tbody>' + body_rows + '</tbody></table></div>')
+    foot = ('<footer>OpenMandriva mirrors &middot; powered by '
+            '<a href="https://github.com/etix/mirrorbits">Mirrorbits</a></footer>'
+            '<script src="/localjs/om-portal.js"></script>')
+    return (head + '<body class="om-has-nav">' + NAV_HTML + '<main>' + intro + origin_html + table + dis_html
+            + '</main>' + foot + '</body></html>\n')
+
+
+def push_status(html):
+    r = subprocess.run(
+        ["ssh", "-o", "ConnectTimeout=20", "-o", "BatchMode=yes", MIRROR_HOST,
+         "sudo -u mirror tee /opt/mirror/mirrorbits/www/status.html >/dev/null"],
+        input=html, capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        sys.exit("Erreur publication status.html: " + r.stderr.strip())
+    print("Publié: mirror.openmandriva.org/status")
+
+
+def publish(md):
+    sha = subprocess.run(["gh", "api", f"repos/{WIKI_REPO}/contents/{WIKI_PATH}", "--jq", ".sha"],
+                         capture_output=True, text=True)
+    args = ["gh", "api", "--method", "PUT", f"repos/{WIKI_REPO}/contents/{WIKI_PATH}",
+            "-f", "message=chore(mirror-status): scheduled reliability table update",
+            "-f", "branch=master",
+            "-f", "content=" + base64.b64encode(md.encode()).decode()]
+    if sha.returncode == 0 and sha.stdout.strip():
+        args += ["-f", "sha=" + sha.stdout.strip()]
+    r = subprocess.run(args, capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit("Erreur publication gh: " + r.stderr.strip())
+    print("Publié sur master:", WIKI_PATH)
+
+
+def main():
+    dry = "--dry-run" in sys.argv
+    mirrors = parse(fetch())
+    enrich_content_time(mirrors)
+    nref = now_ref(mirrors)
+    html = render_html(compute(mirrors, nref), nref)
+    if dry: sys.stdout.write(html)
+    else: push_status(html)
+
+
+if __name__ == "__main__":
+    main()

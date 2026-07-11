@@ -1,0 +1,13 @@
+[Unit]
+Description=Generate and publish the OpenMandriva mirror reliability table to the wiki
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=raphael
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/local/bin/omv-mirror-status
+
+[Install]
+WantedBy=multi-user.target

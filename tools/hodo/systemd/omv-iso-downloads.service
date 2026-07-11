@@ -1,0 +1,13 @@
+[Unit]
+Description=Generate and publish the OpenMandriva ISO downloads page
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=raphael
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/local/bin/omv-iso-downloads
+
+[Install]
+WantedBy=multi-user.target

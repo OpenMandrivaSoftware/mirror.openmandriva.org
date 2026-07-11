@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+omv-iso-downloads — genere la page "Downloads" du portail miroir OpenMandriva :
+liste les ISO de release_current, avec taille, somme de controle, nombre de
+telechargements (Mirrorbits) et un bouton de telechargement (redirige vers le
+miroir le plus proche). Pousse le HTML sur mirror.openmandriva.org (/downloads).
+
+Usage:
+  omv-iso-downloads --dry-run   # imprime le HTML
+  omv-iso-downloads             # publie www/downloads.html
+"""
+import subprocess, sys, urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+
+MIRROR_HOST = "ashledombos@mirror.openmandriva.org"
+ORIGIN = "https://abf-downloads.openmandriva.org"      # pour recuperer les .sha1sum reels
+BASE = "https://mirror.openmandriva.org"               # liens de telechargement (rediriges)
+HTTP_TIMEOUT = 10
+
+REMOTE = r'''
+set -u
+R=redis; MB=mirrorbits
+base=/opt/mirror/repo/openmandriva
+find "$base/release_current" -type d -name '*.bak*' -prune -o -iname '*.iso' -print 2>/dev/null | sort | while read -r p; do
+  rel="/${p#$base/}"
+  sz=$(stat -c '%s' "$p" 2>/dev/null || echo 0)
+  dl=$(docker exec "$MB" mirrorbits stats -h=false file "$rel" 2>/dev/null | awk -F: '/[Dd]ownload requests/{gsub(/[^0-9]/,"",$2);print $2}')
+  printf '%s\t%s\t%s\n' "$rel" "$sz" "${dl:-0}"
+done
+'''
+
+NAV_HTML = (
+  '<nav class="om-nav">'
+  '<a class="om-brand" href="https://mirror.openmandriva.org/"><img src="/localjs/openmandriva-wh.svg" alt="OpenMandriva"></a>'
+  '<a href="https://mirror.openmandriva.org/">Home</a>'
+  '<a href="https://mirror.openmandriva.org/downloads">Downloads</a>'
+  '<a href="https://mirror.openmandriva.org/?mirrorstats">Statistics</a>'
+  '<a href="https://mirror.openmandriva.org/TIME.txt?mirrorlist">Mirror list</a>'
+  '<a href="https://mirmon.openmandriva.org/">Freshness</a>'
+  '<a href="https://mirror.openmandriva.org/status">Reliability</a>'
+  '<span class="om-spacer"></span>'
+  '<a class="om-wiki" href="https://wiki.openmandriva.org/">Wiki &#8599;</a>'
+  '</nav>'
+)
+
+STYLE = """<style>
+ *{box-sizing:border-box}
+ body{margin:0;font-family:'Lato','Segoe UI',Arial,sans-serif;color:#21242B;background:#f6f8fa}
+ main{max-width:1080px;margin:0 auto;padding:22px 16px 48px}
+ h1{font-size:23px;color:var(--om-deep);margin:4px 0 2px;font-weight:900}
+ h2{font-size:15px;color:var(--om-blue);margin:26px 0 10px;text-transform:uppercase;letter-spacing:.5px}
+ .note{color:#4b5158;font-size:13.5px;max-width:82ch;line-height:1.5;margin:0 0 6px}
+ .meta{color:#6a7178;font-size:12.5px;margin:0 0 16px}
+ .tw{overflow-x:auto}
+ table{border-collapse:collapse;width:100%;background:#fff;font-size:13.5px;box-shadow:0 1px 3px rgba(0,0,0,.06);border-radius:8px;overflow:hidden}
+ thead th{background:var(--om-blue);color:#fff;font-weight:700;padding:9px 10px;text-align:left;white-space:nowrap}
+ tbody td{padding:8px 10px;border-top:1px solid #eef1f4;white-space:nowrap;vertical-align:middle}
+ tbody tr:nth-child(even){background:#fafbfc}
+ td.num,th.num{text-align:right}
+ .file{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px}
+ .sum{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;color:#6a7178}
+ .arch{display:inline-block;background:#eef4fb;color:var(--om-deep);border-radius:5px;padding:1px 7px;font-size:11.5px;font-weight:700}
+ a.dl{display:inline-block;background:var(--om-blue);color:#fff;text-decoration:none;font-weight:700;font-size:12.5px;padding:5px 12px;border-radius:6px;white-space:nowrap}
+ a.dl:hover{background:var(--om-cerise)}
+ a.meta{display:inline-block;margin-left:6px;color:var(--om-blue);text-decoration:none;font-weight:700;font-size:12px;border:1px solid var(--om-blue);border-radius:6px;padding:4px 8px;white-space:nowrap}
+ a.meta:hover{background:var(--om-blue);color:#fff}
+ footer{text-align:center;color:#8a9099;font-size:12.5px;padding:20px}
+ footer a{color:var(--om-blue);text-decoration:none}
+ @media (prefers-color-scheme:dark){body{background:#16181d;color:#e6e8ea}table{background:#1e2127}tbody td{border-top-color:#2b2f36}tbody tr:nth-child(even){background:#23262d}.note{color:#b9c0c8}.meta{color:#9aa0a8}.arch{background:#1c2b39}}
+</style>"""
+
+
+def sh(url):
+    try:
+        with urllib.request.urlopen(url, timeout=HTTP_TIMEOUT) as r:
+            return r.read(200).decode("utf-8", "replace").split()[0]
+    except Exception:
+        return None
+
+
+def fetch():
+    r = subprocess.run(["ssh", "-o", "ConnectTimeout=20", "-o", "BatchMode=yes",
+                        MIRROR_HOST, "bash", "-s"], input=REMOTE,
+                       capture_output=True, text=True, timeout=180)
+    if r.returncode != 0:
+        sys.exit("Erreur extraction ssh: " + r.stderr.strip())
+    isos = []
+    for line in r.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) == 3 and parts[0].endswith(".iso"):
+            isos.append({"path": parts[0], "size": int(parts[1] or 0), "dl": int(parts[2] or 0)})
+    return isos
+
+
+def human_size(n):
+    n = float(n)
+    for u in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if n < 1024: return f"{n:.0f} {u}" if u == "B" else f"{n:.1f} {u}"
+        n /= 1024
+    return f"{n:.1f} PiB"
+
+
+def arch_of(name):
+    for a in ("znver1", "aarch64", "x86_64", "riscv64"):
+        if a in name: return a
+    return ""
+
+
+def release_of(path):
+    # /release_current/ROME/... -> ROME ; /release_current/6.0/... -> 6.0
+    parts = path.strip("/").split("/")
+    return parts[1] if len(parts) > 2 else "release_current"
+
+
+def enrich_sums(isos):
+    def one(iso):
+        v = sh(ORIGIN + iso["path"] + ".sha256sum")     # 26.02+ publie du sha256 par ISO
+        if v:
+            iso["sum"], iso["sumtype"] = v, "SHA256"
+        else:
+            v = sh(ORIGIN + iso["path"] + ".sha1sum")   # repli anciens dossiers
+            iso["sum"], iso["sumtype"] = v, ("SHA1" if v else None)
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        list(ex.map(one, isos))
+
+
+def render(isos):
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    isos.sort(key=lambda i: i["path"])
+    groups = {}
+    for i in isos:
+        groups.setdefault(release_of(i["path"]), []).append(i)
+    total_dl = sum(i["dl"] for i in isos)
+
+    def rows(items):
+        out = []
+        for i in items:
+            name = i["path"].rsplit("/", 1)[-1]
+            arch = arch_of(name)
+            s = i.get("sum"); st = i.get("sumtype") or "checksum"
+            sumcell = ('<span class="sum" title="%s: %s">%s…</span>' % (st, s, s[:16])) if s else '<span class="sum">n/a</span>'
+            out.append(
+                '<tr><td class="file">%s</td><td><span class="arch">%s</span></td>'
+                '<td class="num">%s</td><td>%s</td><td class="num">%s</td>'
+                '<td><a class="dl" href="%s%s">Download</a>'
+                '<a class="meta" href="%s%s?meta4" title="Metalink for download managers (aria2, KGet, wget2...)">.meta4</a></td></tr>'
+                % (name, arch or "&mdash;", human_size(i["size"]), sumcell,
+                   "{:,}".format(i["dl"]).replace(",", " "), BASE, i["path"], BASE, i["path"]))
+        return "\n".join(out)
+
+    body = []
+    for rel in sorted(groups, reverse=True):
+        body.append('<h2>%s</h2><div class="tw"><table><thead><tr>'
+                    '<th>Image</th><th>Arch</th><th class="num">Size</th><th>Checksum</th>'
+                    '<th class="num">Downloads</th><th>Get</th></tr></thead><tbody>'
+                    % rel + rows(groups[rel]) + '</tbody></table></div>')
+
+    head = ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width, initial-scale=1">'
+            '<title>Downloads | OpenMandriva mirrors</title>'
+            '<link rel="icon" type="image/svg+xml" href="/localjs/favicon.svg">'
+            '<link rel="icon" href="/localjs/favicon.ico" sizes="any">'
+            '<link rel="stylesheet" href="/localjs/om-portal.css">' + STYLE + '</head>')
+    intro = ('<h1>Download OpenMandriva</h1>'
+             '<p class="note">Installable images for the current release. <b>Download</b> fetches from the '
+             'nearest healthy mirror (Mirrorbits redirect). <b>.meta4</b> is a Metalink file for download '
+             'managers that pull from several mirrors at once with automatic failover, e.g. <b>aria2</b> '
+             '(<code>aria2c file.meta4</code>), KGet, wget2 or DownThemAll. Verify your image with the '
+             'checksum shown.</p>'
+             '<p class="note">Looking for other sources (SourceForge, torrents)? See the official '
+             '<a href="https://www.openmandriva.org/en/downloads">OpenMandriva downloads page</a>.</p>'
+             '<p class="meta">Auto-generated, refreshed daily. Data as of ' + now
+             + ' &middot; total downloads counted via mirrors: ' + "{:,}".format(total_dl).replace(",", " ") + '.</p>')
+    foot = ('<footer>OpenMandriva mirrors &middot; powered by '
+            '<a href="https://github.com/etix/mirrorbits">Mirrorbits</a></footer>'
+            '<script src="/localjs/om-portal.js"></script>')
+    return (head + '<body class="om-has-nav">' + NAV_HTML + '<main>' + intro
+            + "".join(body) + '</main>' + foot + '</body></html>\n')
+
+
+def publish(html):
+    r = subprocess.run(["ssh", "-o", "ConnectTimeout=20", "-o", "BatchMode=yes", MIRROR_HOST,
+                        "sudo -u mirror tee /opt/mirror/mirrorbits/www/downloads.html >/dev/null"],
+                       input=html, capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        sys.exit("Erreur publication downloads.html: " + r.stderr.strip())
+    print("Publié: mirror.openmandriva.org/downloads")
+
+
+def main():
+    isos = fetch()
+    enrich_sums(isos)
+    html = render(isos)
+    if "--dry-run" in sys.argv:
+        sys.stdout.write(html)
+    else:
+        publish(html)
+
+
+if __name__ == "__main__":
+    main()
